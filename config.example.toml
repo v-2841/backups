@@ -1,0 +1,23 @@
+backup_root = 'backups'
+keep_backups = 5
+keep_partial_days = 3
+ssh_connect_timeout = 10
+ssh_server_alive_interval = 30
+ssh_server_alive_count_max = 3
+command_timeout_seconds = 7200
+
+[path_sources]
+items = [
+  'user@example-vps:/home/user/app/.env',
+  'user@example-vps:/home/user/app/media',
+]
+
+[sqlite_sources]
+items = [
+  'user@example-vps:/home/user/app/db.sqlite3',
+]
+
+[postgres_projects]
+items = [
+  'user@example-vps:/home/user/app',
+]

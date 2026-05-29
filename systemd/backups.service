@@ -1,0 +1,11 @@
+[Unit]
+Description=VPS backups
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=__RUN_USER__
+WorkingDirectory=__PROJECT_DIR__
+ExecStart=/usr/bin/bash -lc 'cd __PROJECT_DIR_SH__ && exec __PYTHON_BIN_SH__ backup.py --config __CONFIG_PATH_SH__'
+TimeoutStartSec=3h
