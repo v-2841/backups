@@ -7,8 +7,13 @@ import sqlite3
 from backupper.errors import BackupError
 from backupper.manifest import write_manifest
 from backupper.models import BackupConfig, RemoteSpec
-from backupper.remote import copy_remote_path, stream_remote_stdout_to_file
-from backupper.utils import now_iso, path_size
+from backupper.remote import (
+    copy_remote_path,
+    remote_path_fingerprint,
+    stream_remote_stdout_to_file,
+)
+from backupper.reuse import copy_reused_path, find_reusable_path_source
+from backupper.utils import now_iso
 
 SQLITE_SUFFIXES = ('.sqlite', '.sqlite3', '.db')
 
@@ -29,17 +34,41 @@ def copy_path_source(
     manifest['items'].append(entry)
     write_manifest(snapshot_dir, manifest)
 
-    print(f'==> Copying {raw_source}')
+    print(f'==> Checking {raw_source}')
     try:
         files_root = snapshot_dir / spec.host_dir / 'files'
-        copied_path = copy_remote_path(config, spec, files_root)
+        copied_path = files_root / spec.relative_path
+        fingerprint_info = remote_path_fingerprint(config, spec)
+        fingerprint = fingerprint_info['fingerprint']
+        reusable = find_reusable_path_source(
+            config.backup_root,
+            raw_source,
+            fingerprint,
+        )
+
+        if reusable:
+            reusable_path, reusable_item = reusable
+            copy_reused_path(reusable_path, copied_path)
+            entry['reused_from'] = str(reusable_path)
+            entry['reused_from_source'] = reusable_item.get('source')
+            print(f'==> Reused unchanged {raw_source}')
+        else:
+            print(f'==> Copying {raw_source}')
+            copied_path = copy_remote_path(config, spec, files_root)
+
         sqlite_check = maybe_check_sqlite(copied_path)
         entry.update(
             {
                 'status': 'ok',
                 'finished_at': now_iso(),
                 'destination': str(copied_path.relative_to(snapshot_dir)),
-                'size_bytes': path_size(copied_path),
+                'size_bytes': fingerprint_info['size_bytes'],
+                'fingerprint': fingerprint,
+                'fingerprint_method': fingerprint_info['method'],
+                'source_kind': fingerprint_info['kind'],
+                'file_count': fingerprint_info['file_count'],
+                'dir_count': fingerprint_info['dir_count'],
+                'symlink_count': fingerprint_info['symlink_count'],
             }
         )
         if sqlite_check:

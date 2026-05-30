@@ -43,6 +43,13 @@ items = [
 All remote sources must include the SSH user as `user@host:/full/path`.
 `command_timeout_seconds` is a per-command ceiling; it does not limit normal transfers unless they exceed that duration.
 SSH runs in batch mode with connect/server-alive settings from the config, so systemd runs fail instead of waiting for interactive input.
+For `path_sources`, the script calculates a remote content fingerprint first.
+If the same source has the same fingerprint in a previous snapshot, it copies
+the previous local backup into the new snapshot instead of downloading it again.
+SQLite and Postgres sources are always backed up fresh.
+Live SQLite databases should be listed under `sqlite_sources` as the main
+`*.db`/`*.sqlite3` file, not as a whole directory in `path_sources`; otherwise
+`tar` can fail when `*-wal` changes during reading.
 
 ## Run
 

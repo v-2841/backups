@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import shlex
 import subprocess
 import tempfile
@@ -129,6 +130,147 @@ tar -C / -cf - -- {shlex.quote(remote_rel)}
         )
 
     return copied_path
+
+
+def remote_path_fingerprint(
+    config: BackupConfig,
+    spec: RemoteSpec,
+) -> dict:
+    script = f'''
+set -euo pipefail
+python3 - {shlex.quote(spec.path)} <<'PY'
+from pathlib import Path
+import hashlib
+import json
+import os
+import stat
+import sys
+
+root = Path(sys.argv[1])
+root_stat = os.lstat(root)
+digest = hashlib.sha256()
+
+
+def add_text(value):
+    digest.update(str(value).encode('utf-8', 'surrogateescape'))
+    digest.update(b'\\0')
+
+
+def file_digest(path):
+    file_hash = hashlib.sha256()
+    with path.open('rb') as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b''):
+            file_hash.update(chunk)
+    return file_hash.hexdigest()
+
+
+def add_regular_file(path, relative_path, info):
+    add_text('file')
+    add_text(relative_path)
+    add_text(stat.S_IMODE(info.st_mode))
+    add_text(info.st_size)
+    add_text(file_digest(path))
+
+
+def add_symlink(path, relative_path, info):
+    add_text('symlink')
+    add_text(relative_path)
+    add_text(stat.S_IMODE(info.st_mode))
+    add_text(os.readlink(path))
+
+
+def add_other(path, relative_path, info):
+    add_text('other')
+    add_text(relative_path)
+    add_text(stat.S_IFMT(info.st_mode))
+    add_text(stat.S_IMODE(info.st_mode))
+
+
+if stat.S_ISLNK(root_stat.st_mode):
+    kind = 'symlink'
+    total_size = 0
+    file_count = 0
+    dir_count = 0
+    symlink_count = 1
+    add_symlink(root, '.', root_stat)
+elif root.is_file():
+    kind = 'file'
+    total_size = root_stat.st_size
+    file_count = 1
+    dir_count = 0
+    symlink_count = 0
+    add_regular_file(root, '.', root_stat)
+elif root.is_dir():
+    kind = 'directory'
+    total_size = 0
+    file_count = 0
+    dir_count = 0
+    symlink_count = 0
+
+    for current, dirnames, filenames in os.walk(root):
+        dirnames.sort()
+        filenames.sort()
+        current_path = Path(current)
+        current_relative = current_path.relative_to(root).as_posix()
+        if current_relative == '.':
+            current_relative = ''
+
+        current_stat = os.lstat(current_path)
+        dir_count += 1
+        add_text('dir')
+        add_text(current_relative)
+        add_text(stat.S_IMODE(current_stat.st_mode))
+
+        for name in list(dirnames):
+            path = current_path / name
+            info = os.lstat(path)
+            if stat.S_ISLNK(info.st_mode):
+                relative_path = path.relative_to(root).as_posix()
+                symlink_count += 1
+                add_symlink(path, relative_path, info)
+                dirnames.remove(name)
+
+        for name in filenames:
+            path = current_path / name
+            relative_path = path.relative_to(root).as_posix()
+            info = os.lstat(path)
+            if stat.S_ISREG(info.st_mode):
+                file_count += 1
+                total_size += info.st_size
+                add_regular_file(path, relative_path, info)
+            elif stat.S_ISLNK(info.st_mode):
+                symlink_count += 1
+                add_symlink(path, relative_path, info)
+            else:
+                add_other(path, relative_path, info)
+else:
+    raise SystemExit(f'Unsupported source type: {{root}}')
+
+print(json.dumps(
+    {{
+        'method': 'sha256-content-v1',
+        'kind': kind,
+        'fingerprint': digest.hexdigest(),
+        'size_bytes': total_size,
+        'file_count': file_count,
+        'dir_count': dir_count,
+        'symlink_count': symlink_count,
+    }},
+    sort_keys=True,
+))
+PY
+'''.strip()
+
+    output = run_capture(
+        config,
+        remote_bash_command(config, spec.ssh_target, script),
+    )
+    fingerprint = json.loads(output)
+    if not isinstance(fingerprint, dict):
+        raise BackupError(
+            f'Invalid fingerprint response for {spec.ssh_target}:{spec.path}'
+        )
+    return fingerprint
 
 
 def stream_remote_stdout_to_file(
