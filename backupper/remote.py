@@ -26,7 +26,7 @@ def remote_bash_command(
         '-o',
         f'ServerAliveCountMax={config.ssh.server_alive_count_max}',
         target,
-        'bash -lc ' + shlex.quote(script),
+        'bash -c ' + shlex.quote(script),
     ]
 
 
@@ -70,7 +70,8 @@ def copy_remote_path(
     remote_rel = spec.relative_path
 
     remote_script = f'''
-set -euo pipefail
+set -eu
+set -o pipefail
 test -e {shlex.quote(spec.path)}
 tar -C / -cf - -- {shlex.quote(remote_rel)}
 '''.strip()
@@ -137,7 +138,8 @@ def remote_path_fingerprint(
     spec: RemoteSpec,
 ) -> dict:
     script = f'''
-set -euo pipefail
+set -eu
+set -o pipefail
 python3 - {shlex.quote(spec.path)} <<'PY'
 from pathlib import Path
 import hashlib

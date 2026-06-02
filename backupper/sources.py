@@ -142,7 +142,8 @@ def copy_remote_sqlite(
     destination.parent.mkdir(parents=True, exist_ok=True)
 
     remote_script = f'''
-set -euo pipefail
+set -eu
+set -o pipefail
 SRC_PATH={shlex.quote(spec.path)}
 test -f "$SRC_PATH"
 TMP_PATH="$(mktemp /tmp/backups_sqlite_XXXXXX.sqlite3)"

@@ -141,7 +141,8 @@ def running_compose_services(
     spec: RemoteSpec,
 ) -> list[dict]:
     script = f'''
-set -euo pipefail
+set -eu
+set -o pipefail
 cd {shlex.quote(spec.path)}
 docker compose ps --format json
 '''.strip()
@@ -155,7 +156,8 @@ def configured_postgres_services(
     spec: RemoteSpec,
 ) -> list[str]:
     script = f'''
-set -euo pipefail
+set -eu
+set -o pipefail
 cd {shlex.quote(spec.path)}
 docker compose config --format json
 '''.strip()
@@ -193,16 +195,18 @@ def ensure_postgres_service_running(
         separators=(',', ':'),
     )
     script = f'''
-set -euo pipefail
+set -eu
+set -o pipefail
 cd {shlex.quote(spec.path)}
 SERVICE={shlex.quote(service)}
 
-if docker compose ps --format json "$SERVICE" | grep -q .; then
+if docker compose exec -T "$SERVICE" sh -lc 'true' >/dev/null 2>&1; then
     printf '%s\\n' {shlex.quote(already_running)}
     exit 0
 fi
 
-if docker compose ps -a --format json "$SERVICE" | grep -q .; then
+CONTAINER_OUTPUT="$(docker compose ps -a --format json "$SERVICE" || true)"
+if [ -n "$CONTAINER_OUTPUT" ]; then
     CONTAINER_EXISTED=true
 else
     CONTAINER_EXISTED=false
@@ -246,7 +250,8 @@ def cleanup_temporary_postgres_service(
         rm_command = 'docker compose rm -f "$SERVICE" >/dev/null'
 
     script = f'''
-set -euo pipefail
+set -eu
+set -o pipefail
 cd {shlex.quote(spec.path)}
 SERVICE={shlex.quote(service)}
 docker compose stop "$SERVICE" >/dev/null
@@ -272,7 +277,8 @@ export PGPASSWORD="${{POSTGRES_PASSWORD:-}}"
 psql -U "$PGUSER" -d postgres -At -c {shlex.quote(query)}
 '''.strip()
     script = f'''
-set -euo pipefail
+set -eu
+set -o pipefail
 cd {shlex.quote(spec.path)}
 docker compose exec -T {shlex.quote(service)} sh -lc {shlex.quote(inner)}
 '''.strip()
@@ -293,7 +299,8 @@ export PGPASSWORD="${POSTGRES_PASSWORD:-}"
 pg_dumpall -U "$PGUSER" --globals-only
 '''.strip()
     script = f'''
-set -euo pipefail
+set -eu
+set -o pipefail
 cd {shlex.quote(spec.path)}
 docker compose exec -T {shlex.quote(service)} sh -lc {shlex.quote(inner)}
 '''.strip()
@@ -314,7 +321,8 @@ DB_NAME={shlex.quote(database)}
 pg_dump -U "$PGUSER" -d "$DB_NAME" -Fc
 '''.strip()
     script = f'''
-set -euo pipefail
+set -eu
+set -o pipefail
 cd {shlex.quote(spec.path)}
 docker compose exec -T {shlex.quote(service)} sh -lc {shlex.quote(inner)}
 '''.strip()
