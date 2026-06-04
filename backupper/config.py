@@ -34,10 +34,13 @@ def load_config(path: Path) -> BackupConfig:
     if not backup_root.is_absolute():
         backup_root = config_dir / backup_root
 
-    keep_backups = require_int(config.get('keep_backups', 5), 'keep_backups')
-    if keep_backups < 1:
+    keep_backups_days = require_int(
+        config.get('keep_backups_days', 7),
+        'keep_backups_days',
+    )
+    if keep_backups_days < 1:
         raise BackupError(
-            'Config value keep_backups must be greater than zero'
+            'Config value keep_backups_days must be greater than zero'
         )
 
     keep_partial_days = require_int(
@@ -73,7 +76,7 @@ def load_config(path: Path) -> BackupConfig:
     result = BackupConfig(
         config_path=path,
         backup_root=backup_root.resolve(),
-        keep_backups=keep_backups,
+        keep_backups_days=keep_backups_days,
         keep_partial_days=keep_partial_days,
         command_timeout_seconds=command_timeout_seconds,
         ssh=SSHSettings(

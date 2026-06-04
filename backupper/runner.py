@@ -77,9 +77,9 @@ def run_backup(config: BackupConfig) -> int:
         manifest['final_dir'] = str(final_dir)
         write_manifest(final_dir, manifest)
 
-        removed = rotate_old_backups(
+        removed = prune_old_successful_backups(
             config.backup_root,
-            config.keep_backups,
+            config.keep_backups_days,
         )
         if removed:
             manifest['rotated'] = removed
@@ -137,7 +137,7 @@ def create_manifest(
         'final_dir': str(final_dir),
         'backup_root': str(config.backup_root),
         'config_path': str(config.config_path),
-        'keep_backups': config.keep_backups,
+        'keep_backups_days': config.keep_backups_days,
         'keep_partial_days': config.keep_partial_days,
         'command_timeout_seconds': config.command_timeout_seconds,
         'ssh': {
@@ -166,24 +166,16 @@ def unique_snapshot_paths(root: Path) -> tuple[str, Path, Path]:
     )
 
 
-def rotate_old_backups(root: Path, keep: int) -> list[str]:
-    backups = sorted(
-        [
-            item
-            for item in root.iterdir()
-            if (
-                item.is_dir()
-                and item.name.startswith('backup_')
-                and not item.name.endswith('.partial')
-            )
-        ],
-        key=lambda item: item.name,
-        reverse=True,
-    )
+def prune_old_successful_backups(root: Path, keep_days: int) -> list[str]:
+    cutoff = time.time() - (keep_days * 24 * 60 * 60)
     removed = []
-    for old_backup in backups[keep:]:
-        shutil.rmtree(old_backup)
-        removed.append(str(old_backup))
+    for backup_dir in sorted(root.glob('backup_*')):
+        if not backup_dir.is_dir() or backup_dir.name.endswith('.partial'):
+            continue
+        if backup_dir.stat().st_mtime > cutoff:
+            continue
+        shutil.rmtree(backup_dir)
+        removed.append(str(backup_dir))
     return removed
 
 
