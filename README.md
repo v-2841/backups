@@ -50,6 +50,10 @@ SQLite and Postgres sources are always backed up fresh.
 Live SQLite databases should be listed under `sqlite_sources` as the main
 `*.db`/`*.sqlite3` file, not as a whole directory in `path_sources`; otherwise
 `tar` can fail when `*-wal` changes during reading.
+For Postgres projects, a production Compose file named
+`docker-compose.prod.yml`, `docker-compose.prod.yaml`, `compose.prod.yml`, or
+`compose.prod.yaml` is selected automatically. Otherwise Docker Compose uses
+its standard default file discovery.
 
 ## Run
 

@@ -16,6 +16,24 @@ from backupper.remote import (
 )
 from backupper.utils import now_iso, sanitize_path_part
 
+COMPOSE_SETUP = '''
+run_compose() {
+    local compose_file
+    for compose_file in \
+        docker-compose.prod.yml \
+        docker-compose.prod.yaml \
+        compose.prod.yml \
+        compose.prod.yaml
+    do
+        if [ -f "$compose_file" ]; then
+            docker compose -f "$compose_file" "$@"
+            return
+        fi
+    done
+    docker compose "$@"
+}
+'''.strip()
+
 
 def copy_postgres_project(
     config: BackupConfig,
@@ -144,7 +162,8 @@ def running_compose_services(
 set -eu
 set -o pipefail
 cd {shlex.quote(spec.path)}
-docker compose ps --format json
+{COMPOSE_SETUP}
+run_compose ps --format json
 '''.strip()
     command = remote_bash_command(config, spec.ssh_target, script)
     output = run_capture(config, command)
@@ -159,7 +178,8 @@ def configured_postgres_services(
 set -eu
 set -o pipefail
 cd {shlex.quote(spec.path)}
-docker compose config --format json
+{COMPOSE_SETUP}
+run_compose config --format json
 '''.strip()
     command = remote_bash_command(config, spec.ssh_target, script)
     output = run_capture(config, command)
@@ -198,24 +218,25 @@ def ensure_postgres_service_running(
 set -eu
 set -o pipefail
 cd {shlex.quote(spec.path)}
+{COMPOSE_SETUP}
 SERVICE={shlex.quote(service)}
 
-if docker compose exec -T "$SERVICE" sh -lc 'true' >/dev/null 2>&1; then
+if run_compose exec -T "$SERVICE" sh -lc 'true' >/dev/null 2>&1; then
     printf '%s\\n' {shlex.quote(already_running)}
     exit 0
 fi
 
-CONTAINER_OUTPUT="$(docker compose ps -a --format json "$SERVICE" || true)"
+CONTAINER_OUTPUT="$(run_compose ps -a --format json "$SERVICE" || true)"
 if [ -n "$CONTAINER_OUTPUT" ]; then
     CONTAINER_EXISTED=true
 else
     CONTAINER_EXISTED=false
 fi
 
-docker compose up -d --no-deps "$SERVICE" >/dev/null
+run_compose up -d --no-deps "$SERVICE" >/dev/null
 
 for _ in $(seq 1 60); do
-    if docker compose exec -T "$SERVICE" sh -lc '
+    if run_compose exec -T "$SERVICE" sh -lc '
         PGUSER="${{POSTGRES_USER:-postgres}}"
         export PGPASSWORD="${{POSTGRES_PASSWORD:-}}"
         pg_isready -U "$PGUSER" -d postgres >/dev/null 2>&1
@@ -228,7 +249,7 @@ for _ in $(seq 1 60); do
     sleep 2
 done
 
-docker compose logs --no-color --tail=80 "$SERVICE" >&2 || true
+run_compose logs --no-color --tail=80 "$SERVICE" >&2 || true
 exit 1
 '''.strip()
     command = remote_bash_command(config, spec.ssh_target, script)
@@ -247,14 +268,15 @@ def cleanup_temporary_postgres_service(
 ) -> None:
     rm_command = ''
     if not container_existed_before:
-        rm_command = 'docker compose rm -f "$SERVICE" >/dev/null'
+        rm_command = 'run_compose rm -f "$SERVICE" >/dev/null'
 
     script = f'''
 set -eu
 set -o pipefail
 cd {shlex.quote(spec.path)}
+{COMPOSE_SETUP}
 SERVICE={shlex.quote(service)}
-docker compose stop "$SERVICE" >/dev/null
+run_compose stop "$SERVICE" >/dev/null
 {rm_command}
 '''.strip()
     command = remote_bash_command(config, spec.ssh_target, script)
@@ -280,7 +302,8 @@ psql -U "$PGUSER" -d postgres -At -c {shlex.quote(query)}
 set -eu
 set -o pipefail
 cd {shlex.quote(spec.path)}
-docker compose exec -T {shlex.quote(service)} sh -lc {shlex.quote(inner)}
+{COMPOSE_SETUP}
+run_compose exec -T {shlex.quote(service)} sh -lc {shlex.quote(inner)}
 '''.strip()
     command = remote_bash_command(config, spec.ssh_target, script)
     output = run_capture(config, command)
@@ -302,7 +325,8 @@ pg_dumpall -U "$PGUSER" --globals-only
 set -eu
 set -o pipefail
 cd {shlex.quote(spec.path)}
-docker compose exec -T {shlex.quote(service)} sh -lc {shlex.quote(inner)}
+{COMPOSE_SETUP}
+run_compose exec -T {shlex.quote(service)} sh -lc {shlex.quote(inner)}
 '''.strip()
     stream_remote_stdout_to_file(config, spec.ssh_target, script, destination)
 
@@ -324,7 +348,8 @@ pg_dump -U "$PGUSER" -d "$DB_NAME" -Fc
 set -eu
 set -o pipefail
 cd {shlex.quote(spec.path)}
-docker compose exec -T {shlex.quote(service)} sh -lc {shlex.quote(inner)}
+{COMPOSE_SETUP}
+run_compose exec -T {shlex.quote(service)} sh -lc {shlex.quote(inner)}
 '''.strip()
     stream_remote_stdout_to_file(config, spec.ssh_target, script, destination)
 
