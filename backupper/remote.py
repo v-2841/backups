@@ -72,8 +72,8 @@ def copy_remote_path(
     remote_script = f'''
 set -eu
 set -o pipefail
-test -e {shlex.quote(spec.path)}
-tar -C / -cf - -- {shlex.quote(remote_rel)}
+sudo -n test -e {shlex.quote(spec.path)}
+sudo -n tar -C / -cf - -- {shlex.quote(remote_rel)}
 '''.strip()
 
     with (
@@ -140,7 +140,7 @@ def remote_path_fingerprint(
     script = f'''
 set -eu
 set -o pipefail
-python3 - {shlex.quote(spec.path)} <<'PY'
+sudo -n python3 - {shlex.quote(spec.path)} <<'PY'
 from pathlib import Path
 import hashlib
 import json
@@ -188,6 +188,10 @@ def add_other(path, relative_path, info):
     add_text(stat.S_IMODE(info.st_mode))
 
 
+def raise_walk_error(error):
+    raise error
+
+
 if stat.S_ISLNK(root_stat.st_mode):
     kind = 'symlink'
     total_size = 0
@@ -209,7 +213,10 @@ elif root.is_dir():
     dir_count = 0
     symlink_count = 0
 
-    for current, dirnames, filenames in os.walk(root):
+    for current, dirnames, filenames in os.walk(
+        root,
+        onerror=raise_walk_error,
+    ):
         dirnames.sort()
         filenames.sort()
         current_path = Path(current)

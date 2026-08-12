@@ -43,6 +43,7 @@ items = [
 All remote sources must include the SSH user as `user@host:/full/path`.
 `command_timeout_seconds` is a per-command ceiling; it does not limit normal transfers unless they exceed that duration.
 SSH runs in batch mode with connect/server-alive settings from the config, so systemd runs fail instead of waiting for interactive input.
+The remote SSH user must be allowed to run `sudo -n` for `python3`, `test`, and `tar`; `path_sources` use it to read protected files consistently.
 For `path_sources`, the script calculates a remote content fingerprint first.
 If the same source has the same fingerprint in a previous snapshot, it copies
 the previous local backup into the new snapshot instead of downloading it again.
