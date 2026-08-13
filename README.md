@@ -17,6 +17,7 @@ Config format:
 ```toml
 backup_root = 'backups'
 keep_backups_days = 7
+keep_min_backups = 3
 keep_partial_days = 3
 ssh_connect_timeout = 10
 ssh_server_alive_interval = 30
@@ -62,10 +63,18 @@ its standard default file discovery.
 python3 backup.py --config config.toml
 ```
 
+The run prints one progress line per source (result, size, duration;
+`reused` marks sources restored from a previous snapshot) and a final
+summary. Colors are used only when stdout is a TTY, so systemd journal
+output stays plain.
 Snapshots are written to `./backups/backup_YYYY-MM-DD_HH-MM-SS`.
 If one source fails, the script still tries the remaining sources and records every item in `manifest.json`. A run that finishes is promoted to a final snapshot regardless: `manifest.status` is `ok` when every source succeeded, or `completed_with_errors` when some failed (the process still exits with code `1` so systemd flags the failure).
 A `*.partial` directory only remains when the run is interrupted before it finishes (crash, kill, timeout); these are pruned using `keep_partial_days`.
-Successful `backup_*` snapshots are pruned by age using `keep_backups_days`.
+Successful `backup_*` snapshots are pruned by age using `keep_backups_days`,
+but the newest `keep_min_backups` snapshots with `manifest.status = ok` are
+never pruned regardless of age, so a streak of failing runs cannot rotate
+out the last known-good backups. Set `keep_min_backups = 0` to disable this
+protection.
 SQLite copies are verified with `PRAGMA integrity_check`; Postgres custom-format dumps are verified locally with `pg_restore -l`.
 
 ## Install systemd timer

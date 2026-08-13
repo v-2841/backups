@@ -19,6 +19,7 @@ class BackupConfig:
     config_path: Path
     backup_root: Path
     keep_backups_days: int
+    keep_min_backups: int
     keep_partial_days: int
     command_timeout_seconds: int
     ssh: SSHSettings

@@ -7,12 +7,20 @@ import sys
 import time
 
 from backupper.manifest import write_manifest
-from backupper.models import BackupConfig
+from backupper.models import BackupConfig, RemoteSpec
 from backupper.postgres import copy_postgres_project
+from backupper.progress import Progress
+from backupper.reuse import previous_backup_dirs, read_manifest
 from backupper.sources import copy_path_source, copy_sqlite_source
 from backupper.utils import now_iso, timestamp_name
 
 BackupHandler = Callable[[BackupConfig, str, Path, dict], None]
+
+KIND_LABELS = {
+    'path': 'path',
+    'sqlite': 'sqlite',
+    'postgres_project': 'postgres',
+}
 
 
 def run_backup(config: BackupConfig) -> int:
@@ -26,38 +34,36 @@ def run_backup(config: BackupConfig) -> int:
     )
     partial_dir.mkdir(parents=True)
 
+    work: list[tuple[str, str, BackupHandler]] = []
+    for source in config.path_sources:
+        work.append(('path', source, copy_path_source))
+    for source in config.sqlite_sources:
+        work.append(('sqlite', source, copy_sqlite_source))
+    for project in config.postgres_projects:
+        work.append(('postgres_project', project, copy_postgres_project))
+
+    progress = Progress(
+        [item_label(kind, source) for kind, source, _ in work],
+    )
+    progress.print_header(snapshot_name, final_dir)
+    if pruned_partials:
+        progress.note(
+            f'Pruned {len(pruned_partials)} stale partial snapshot(s)'
+        )
+
     manifest = create_manifest(config, snapshot_name, partial_dir, final_dir)
     manifest['pruned_partials'] = pruned_partials
     write_manifest(partial_dir, manifest)
 
-    for source in config.path_sources:
+    for kind, source, handler in work:
         run_item(
             config,
-            'path',
+            kind,
             source,
-            copy_path_source,
+            handler,
             partial_dir,
             manifest,
-        )
-
-    for source in config.sqlite_sources:
-        run_item(
-            config,
-            'sqlite',
-            source,
-            copy_sqlite_source,
-            partial_dir,
-            manifest,
-        )
-
-    for project in config.postgres_projects:
-        run_item(
-            config,
-            'postgres_project',
-            project,
-            copy_postgres_project,
-            partial_dir,
-            manifest,
+            progress,
         )
 
     # A run that reaches this point has finished. Promote it to a final
@@ -80,6 +86,7 @@ def run_backup(config: BackupConfig) -> int:
         removed = prune_old_successful_backups(
             config.backup_root,
             config.keep_backups_days,
+            config.keep_min_backups,
         )
         if removed:
             manifest['rotated'] = removed
@@ -90,6 +97,7 @@ def run_backup(config: BackupConfig) -> int:
         manifest['finished_at'] = now_iso()
         manifest['errors'].append(str(error))
         write_manifest(partial_dir, manifest)
+        progress.print_summary(partial_dir, 'failed')
         print(
             f'Backup failed, partial snapshot kept at: {partial_dir}',
             file=sys.stderr,
@@ -97,11 +105,13 @@ def run_backup(config: BackupConfig) -> int:
         print(str(error), file=sys.stderr)
         return 1
 
+    if removed:
+        progress.note(f'Rotated out {len(removed)} old snapshot(s)')
+    progress.print_summary(final_dir, manifest['status'])
+
     if has_errors:
         print(f'Backup finished with errors: {final_dir}', file=sys.stderr)
         return 1
-
-    print(f'Backup finished: {final_dir}')
     return 0
 
 
@@ -112,14 +122,79 @@ def run_item(
     handler: BackupHandler,
     partial_dir: Path,
     manifest: dict,
+    progress: Progress,
 ) -> None:
+    progress.start_item()
+    started = time.monotonic()
     try:
         handler(config, source, partial_dir, manifest)
     except Exception as error:
+        duration = time.monotonic() - started
         error_text = f'{kind} {source}: {error}'
         manifest['errors'].append(error_text)
         write_manifest(partial_dir, manifest)
+        progress.finish_item(
+            'FAILED',
+            None,
+            duration,
+            failed=True,
+            detail=short_error(error),
+        )
         print(f'ERROR: {error_text}', file=sys.stderr)
+    else:
+        duration = time.monotonic() - started
+        result, size_bytes, reused, detail = describe_entry(
+            manifest['items'][-1],
+        )
+        progress.finish_item(
+            result,
+            size_bytes,
+            duration,
+            reused=reused,
+            detail=detail,
+        )
+
+
+def item_label(kind: str, source: str) -> tuple[str, str, str]:
+    kind_text = KIND_LABELS.get(kind, kind)
+    try:
+        spec = RemoteSpec.parse(source)
+    except Exception:
+        return kind_text, '', source
+
+    path = spec.path
+    home_prefix = f'/home/{spec.user}/'
+    if path.startswith(home_prefix):
+        path = path[len(home_prefix):]
+    return kind_text, spec.host, path
+
+
+def describe_entry(entry: dict) -> tuple[str, int | None, bool, str]:
+    if entry.get('type') == 'path':
+        reused = bool(entry.get('reused_from'))
+        result = 'reused' if reused else 'copied'
+        return result, entry.get('size_bytes'), reused, ''
+
+    if entry.get('type') == 'sqlite':
+        return 'dumped', entry.get('size_bytes'), False, ''
+
+    databases = 0
+    size_bytes = 0
+    for service in entry.get('services', []):
+        service_databases = service.get('databases', [])
+        databases += len(service_databases)
+        for database in service_databases:
+            size_bytes += database.get('size_bytes', 0)
+        size_bytes += service.get('globals', {}).get('size_bytes', 0)
+    noun = 'db' if databases == 1 else 'dbs'
+    return 'dumped', size_bytes, False, f'{databases} {noun} + globals'
+
+
+def short_error(error: Exception) -> str:
+    text = str(error).strip()
+    if not text:
+        return error.__class__.__name__
+    return text.splitlines()[0]
 
 
 def create_manifest(
@@ -138,6 +213,7 @@ def create_manifest(
         'backup_root': str(config.backup_root),
         'config_path': str(config.config_path),
         'keep_backups_days': config.keep_backups_days,
+        'keep_min_backups': config.keep_min_backups,
         'keep_partial_days': config.keep_partial_days,
         'command_timeout_seconds': config.command_timeout_seconds,
         'ssh': {
@@ -166,17 +242,44 @@ def unique_snapshot_paths(root: Path) -> tuple[str, Path, Path]:
     )
 
 
-def prune_old_successful_backups(root: Path, keep_days: int) -> list[str]:
+def prune_old_successful_backups(
+    root: Path,
+    keep_days: int,
+    keep_min_ok: int,
+) -> list[str]:
     cutoff = time.time() - (keep_days * 24 * 60 * 60)
+    protected = newest_ok_backup_dirs(root, keep_min_ok)
     removed = []
     for backup_dir in sorted(root.glob('backup_*')):
         if not backup_dir.is_dir() or backup_dir.name.endswith('.partial'):
+            continue
+        if backup_dir in protected:
             continue
         if backup_dir.stat().st_mtime > cutoff:
             continue
         shutil.rmtree(backup_dir)
         removed.append(str(backup_dir))
     return removed
+
+
+def newest_ok_backup_dirs(root: Path, count: int) -> set[Path]:
+    '''The newest `count` snapshots whose manifest status is ok.
+
+    These are never pruned by age, so a streak of failing runs cannot
+    rotate out the last known-good backups.
+    '''
+    if count < 1:
+        return set()
+
+    ok_dirs: set[Path] = set()
+    for backup_dir in previous_backup_dirs(root):
+        manifest = read_manifest(backup_dir)
+        if manifest is None or manifest.get('status') != 'ok':
+            continue
+        ok_dirs.add(backup_dir)
+        if len(ok_dirs) == count:
+            break
+    return ok_dirs
 
 
 def prune_old_partial_backups(root: Path, keep_days: int) -> list[str]:

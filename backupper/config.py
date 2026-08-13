@@ -43,6 +43,15 @@ def load_config(path: Path) -> BackupConfig:
             'Config value keep_backups_days must be greater than zero'
         )
 
+    keep_min_backups = require_int(
+        config.get('keep_min_backups', 3),
+        'keep_min_backups',
+    )
+    if keep_min_backups < 0:
+        raise BackupError(
+            'Config value keep_min_backups must be zero or greater'
+        )
+
     keep_partial_days = require_int(
         config.get('keep_partial_days', 3),
         'keep_partial_days',
@@ -77,6 +86,7 @@ def load_config(path: Path) -> BackupConfig:
         config_path=path,
         backup_root=backup_root.resolve(),
         keep_backups_days=keep_backups_days,
+        keep_min_backups=keep_min_backups,
         keep_partial_days=keep_partial_days,
         command_timeout_seconds=command_timeout_seconds,
         ssh=SSHSettings(

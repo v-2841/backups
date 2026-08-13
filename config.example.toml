@@ -1,5 +1,6 @@
 backup_root = 'backups'
 keep_backups_days = 7
+keep_min_backups = 3
 keep_partial_days = 3
 ssh_connect_timeout = 10
 ssh_server_alive_interval = 30

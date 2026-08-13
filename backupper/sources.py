@@ -34,7 +34,6 @@ def copy_path_source(
     manifest['items'].append(entry)
     write_manifest(snapshot_dir, manifest)
 
-    print(f'==> Checking {raw_source}')
     try:
         files_root = snapshot_dir / spec.host_dir / 'files'
         copied_path = files_root / spec.relative_path
@@ -51,9 +50,7 @@ def copy_path_source(
             copy_reused_path(reusable_path, copied_path)
             entry['reused_from'] = str(reusable_path)
             entry['reused_from_source'] = reusable_item.get('source')
-            print(f'==> Reused unchanged {raw_source}')
         else:
-            print(f'==> Copying {raw_source}')
             copied_path = copy_remote_path(config, spec, files_root)
 
         sqlite_check = maybe_check_sqlite(copied_path)
@@ -101,7 +98,6 @@ def copy_sqlite_source(
     manifest['items'].append(entry)
     write_manifest(snapshot_dir, manifest)
 
-    print(f'==> Backing up SQLite {raw_source}')
     try:
         sqlite_root = snapshot_dir / spec.host_dir / 'sqlite'
         copied_path = copy_remote_sqlite(config, spec, sqlite_root)

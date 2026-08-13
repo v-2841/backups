@@ -53,7 +53,6 @@ def copy_postgres_project(
     manifest['items'].append(entry)
     write_manifest(snapshot_dir, manifest)
 
-    print(f'==> Dumping Postgres project {raw_project}')
     try:
         services = find_postgres_services(config, spec)
         if not services:
